@@ -1,0 +1,35 @@
+name:                straightForward
+version:             0.1.0.0
+github:              "theSeafarer/straightForward"
+license:             BSD3
+author:              "Parham Zahiri"
+maintainer:          "lambdaxmapstox@gmail.com"
+copyright:           "2018 Parham Zahiri"
+
+extra-source-files:
+- README.md
+- ChangeLog.md
+
+
+description:         Please see the README on Github at <https://github.com/theSeafarer/straightForward#readme>
+
+dependencies:
+- base >= 4.7 && < 5
+- parsec >= 3.1
+- text >= 1.2
+- template-haskell >= 2.12
+
+library:
+  source-dirs: src
+
+
+tests:
+  straightForward-test:
+    main:                Spec.hs
+    source-dirs:         test
+    ghc-options:
+    - -threaded
+    - -rtsopts
+    - -with-rtsopts=-N
+    dependencies:
+    - straightForward
