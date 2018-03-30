@@ -78,6 +78,9 @@ instance JSONParse Bool where
   jsonParse = boolP
 instance JSONParse a => JSONParse ([] a) where
   jsonParse = arrP
+instance JSONParse a => JSONParse (Maybe a) where
+  jsonParse = P.try (P.string "null") $> Nothing 
+    <|> Just <$> jsonParse
 
 parseJSON :: JSONParse a => T.Text -> Maybe a
 parseJSON t = case res of
