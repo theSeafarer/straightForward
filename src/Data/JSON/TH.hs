@@ -1,6 +1,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE TemplateHaskell #-}
+-- {-# LANGUAGE UndecidableInstances #-}
 
 module Data.JSON.TH (
   JSONParse,
@@ -13,80 +14,111 @@ import           Control.Applicative            ( (<|>) )
 import           Control.Monad                  ( void, forM )
 import           Data.Functor                   ( ($>) )
 import           Data.Semigroup                 ( mconcat, (<>) )
-import qualified Text.Parsec                    as P
-import qualified Text.Parsec.Char               as P
-import qualified Data.Text                      as T
+import           Data.Char                      ( isDigit )
+import           Data.Word                      ( Word8 )
+import           Data.ByteString.Internal       ( c2w, w2c )
+import qualified Data.Attoparsec.ByteString     as P
+import qualified Data.Attoparsec.Combinator     as P
+import qualified Data.ByteString                as BS
+import qualified Data.ByteString.Char8          as BSC
 import qualified Language.Haskell.TH            as TH
 import qualified Language.Haskell.TH.Quote      as TH
 import qualified Language.Haskell.TH.Syntax     as TH
 
-type Parser = P.Parsec T.Text ()
-newtype Name = Name T.Text deriving (Eq, Ord, Show)
+-- type P.Parser = P.Parsec T.Text ()
+-- newtype Name = Name BS.ByteString deriving (Eq, Ord, Show)
 
-whitespace :: Parser ()
-whitespace = void $ P.many $ P.oneOf " \n\t"
+whitespace :: P.Parser ()
+whitespace = void $ P.many' $ oneOf " \n\t"
 
-lexeme :: Parser a -> Parser a
+lexeme :: P.Parser a -> P.Parser a
 lexeme p = p <* whitespace
 
-floatP :: Parser Float
-floatP = lexeme $ fmap read $ P.try $ (++) <$> P.try int <*> decimal
+digit :: P.Parser Word8
+digit = P.satisfy $ isDigit . w2c
+
+oneOf :: String -> P.Parser Word8
+oneOf cs = P.satisfy $ \w -> w `elem` ws
+  where ws = c2w <$> cs
+
+byteRead :: Read a => BS.ByteString -> a
+byteRead = read . BSC.unpack
+
+wordListRead :: Read a => [Word8] -> a
+wordListRead = read . fmap w2c
+
+between :: P.Parser open -> P.Parser close -> P.Parser a -> P.Parser a
+between open close p = open *> p <* close
+
+floatP :: P.Parser Float
+floatP = lexeme $ fmap wordListRead $ P.try $ (++) <$> P.try int <*> decimal
   where
-    intPart    = P.many1 P.digit
-    int        = (P.char '+' >> intPart)
-              <|> (:) <$> P.char '-' <*> intPart
+    intPart    = P.many1 digit
+    int        = (P.word8 (c2w '+') >> intPart)
+              <|> (:) <$> P.word8 (c2w '-') <*> intPart
               <|> intPart
-    decimal    = (:) <$> P.char '.' <*> intPart
+    decimal    = (:) <$> P.word8 (c2w '.') <*> intPart
 
-intP :: Parser Int
-intP = lexeme $ read <$> int
+intP :: P.Parser Int
+intP = lexeme $ wordListRead <$> int
   where
-    intPart    = P.many1 P.digit
-    int        = (P.char '+' >> intPart)
-              <|> (:) <$> P.char '-' <*> intPart
+    intPart    = P.many1 digit
+    int        = (P.word8 (c2w '+') >> intPart)
+              <|> (:) <$> P.word8 (c2w '-') <*> intPart
               <|> intPart
 
-strP :: Parser T.Text
-strP = lexeme $ T.pack <$>
-  do P.char '\"'; P.manyTill P.anyChar (P.try $ P.char '\"')
 
-boolP :: Parser Bool
+strP' :: P.Parser BS.ByteString
+strP' = lexeme $
+  P.word8 (c2w '\"') *> (BS.pack <$> P.manyTill' P.anyWord8 (P.word8 (c2w '\"')))-- P.takeWhile (\w -> w /= (c2w '\"'))
+
+betQuote :: BS.ByteString -> P.Parser ()
+betQuote s = void $ between (P.word8 (c2w '\"')) (P.word8 (c2w '\"')) $ P.string s
+
+anyBetQuote :: P.Parser ()
+-- anyBetQuote = void $ between (P.word8 (c2w '\"')) (P.word8 (c2w '\"')) $ P.many1' P.anyWord8
+anyBetQuote = void $ P.word8 (c2w '"') *> P.anyWord8 *> P.manyTill' P.anyWord8 (P.word8 (c2w '\"'))
+
+boolP :: P.Parser Bool
 boolP = let true = P.string "true" $> True
             false = P.string "false" $> False
           in lexeme $ true <|> false
 
-nameP :: Parser Name
+nameP :: P.Parser ()
 nameP = lexeme $ do
-  first <- P.oneOf ['a'..'z'] -- ++ ['A'..'Z']
-  rest  <- P.many $ P.oneOf $ ['A'..'Z'] ++ ['a'..'z'] ++ ['0'..'9'] ++ ['_', '\'']
-  return $ Name $ T.pack $ first : rest
+  first <- oneOf ['a'..'z'] -- ++ ['A'..'Z']
+  rest  <- P.many' $ oneOf $ ['A'..'Z'] ++ ['a'..'z'] ++ ['0'..'9'] ++ ['_', '\'']
+  -- return $ Name $ T.pack $ first : rest
+  return ()
 
-arrP :: JSONParse a => Parser [a]
+arrP :: JSONParse a => P.Parser [a]
 arrP = lexeme $
-  P.between (lexeme $ P.char '[') (P.char ']') (P.sepBy1 jsonParse $ lexeme $ P.char ',')
+  between (lexeme $ P.word8 (c2w '[')) (P.word8 (c2w ']')) (P.sepBy1 jsonParse $ lexeme $ P.word8 (c2w ','))
 
 class JSONParse a where
-  jsonParse :: Parser a
+  jsonParse :: P.Parser a
 
-instance JSONParse T.Text where
-  jsonParse = strP
+instance JSONParse BS.ByteString where
+  jsonParse = strP' P.<?> "ByteString"
+
 instance JSONParse Int where
-  jsonParse = intP
+  jsonParse = intP P.<?> "Integer"
 instance JSONParse Float where
-  jsonParse = floatP
+  jsonParse = floatP P.<?> "Float"
 instance JSONParse Bool where
-  jsonParse = boolP
+  jsonParse = boolP P.<?> "Bool"
 instance JSONParse a => JSONParse ([] a) where
-  jsonParse = arrP
+  jsonParse = arrP P.<?> "Array"
 instance JSONParse a => JSONParse (Maybe a) where
-  jsonParse = P.try (P.string "null") $> Nothing 
-    <|> Just <$> jsonParse
+  jsonParse = P.string "null" $> Nothing
+    <|> Just <$> jsonParse P.<?> "Maybe"
 
-parseJSON :: JSONParse a => T.Text -> Maybe a
-parseJSON t = case res of
-    (Left _) -> Nothing
-    (Right ofA) -> Just ofA
-  where res = P.parse jsonParse "JSON Parse" t
+
+rightToMaybe :: Either e a -> Maybe a
+rightToMaybe = either (const Nothing) Just
+
+-- I have to use parseOnly otherwise I get a Partial, have to find out why
+parseJSON t = P.parseOnly jsonParse t
 
 mkJSON :: TH.Name -> TH.DecsQ
 mkJSON name = do
@@ -98,26 +130,45 @@ mkJSON name = do
   where
     parseF cons'' = case cons'' of
       [c] -> [e| $(parseC c) |]
-      cs  -> foldl1 (\a b -> [e| $a <|> $b |]) $ (\t -> [e| P.try $(parseC t) |]) <$> cs
+      cs  -> foldl1 (\a b -> [e| $a <|> $b |]) $ (\t -> [e| $(parseC t) |]) <$> cs
     parseC c = [e|
-      lexeme $ P.between (lexeme $ P.char '{') (P.char '}') $ $(TH.runQ $ doC c) |]
+      lexeme $ between (lexeme (P.word8 (c2w '{'))) (P.word8 (c2w '}')) $ $(TH.runQ $ doC c) |]
       where
         fst3 (x, _, _) = x
-        mkStmts (TH.NormalC cName ts) = return (fmap (\_ -> do
-                                          v <- TH.newName "v"
-                                          return ([TH.NoBindS (TH.VarE 'nameP),
-                                            TH.NoBindS (TH.InfixE (Just (TH.VarE 'lexeme)) (TH.VarE '($)) (Just (TH.AppE (TH.VarE 'P.char) (TH.LitE (TH.CharL ':'))))),
-                                            TH.BindS (TH.VarP v) (TH.VarE 'jsonParse),
-                                            TH.NoBindS (TH.InfixE (Just (TH.VarE 'lexeme)) (TH.VarE '($)) (Just (TH.AppE (TH.VarE 'P.char) (TH.LitE (TH.CharL ',')))))], v)
-                                                      ) ts, cName)
-        mkStmts (TH.RecC cName ts) = return (fmap (\(nm, _, _) -> do
-                                          v <- TH.newName "v"
-                                          n <- TH.stringE $ TH.nameBase nm
-                                          return ([TH.NoBindS (TH.InfixE (Just (TH.VarE 'lexeme)) (TH.VarE '($)) (Just (TH.AppE (TH.VarE 'P.string) n ))),
-                                            TH.NoBindS (TH.InfixE (Just (TH.VarE 'lexeme)) (TH.VarE '($)) (Just (TH.AppE (TH.VarE 'P.char) (TH.LitE (TH.CharL ':'))))),
-                                            TH.BindS (TH.VarP v) (TH.VarE 'jsonParse),
-                                            TH.NoBindS (TH.InfixE (Just (TH.VarE 'lexeme)) (TH.VarE '($)) (Just (TH.AppE (TH.VarE 'P.char) (TH.LitE (TH.CharL ',')))))], v)
-                                                      ) ts, cName)
+        mkStmts (TH.NormalC cName ts) =
+          return (fmap (\_ -> do
+            v <- TH.newName "v"
+            return ([TH.NoBindS
+                (TH.AppE (TH.VarE 'lexeme) (TH.VarE 'anyBetQuote)),
+              TH.NoBindS
+                (TH.InfixE (Just (TH.VarE 'lexeme))
+                  (TH.VarE '($))
+                  (Just (TH.AppE (TH.VarE 'P.word8) (TH.AppE (TH.VarE 'c2w) (TH.LitE (TH.CharL ':')))))),
+              TH.BindS
+                (TH.VarP v)
+                (TH.VarE 'jsonParse),
+              TH.NoBindS
+                (TH.InfixE (Just (TH.VarE 'lexeme))
+                  (TH.VarE '($))
+                  (Just (TH.AppE (TH.VarE 'P.word8) (TH.AppE (TH.VarE 'c2w) (TH.LitE (TH.CharL ','))))))], v)
+                        ) ts, cName)
+        mkStmts (TH.RecC cName ts) =
+          return (fmap (\(nm, _, _) -> do
+            v <- TH.newName "v"
+            n <- TH.stringE $ TH.nameBase nm
+            return ([TH.NoBindS
+                (TH.InfixE (Just (TH.VarE 'lexeme))
+                  (TH.VarE '($)) (Just (TH.AppE (TH.VarE 'betQuote) n ))),
+              TH.NoBindS
+                (TH.InfixE (Just (TH.VarE 'lexeme))
+                  (TH.VarE '($))
+                  (Just (TH.AppE (TH.VarE 'P.word8) (TH.AppE (TH.VarE 'c2w) (TH.LitE (TH.CharL ':')))))),
+              TH.BindS (TH.VarP v) (TH.VarE 'jsonParse),
+              TH.NoBindS
+                (TH.InfixE (Just (TH.VarE 'lexeme))
+                  (TH.VarE '($))
+                  (Just (TH.AppE (TH.VarE 'P.word8) (TH.AppE (TH.VarE 'c2w) (TH.LitE (TH.CharL ','))))))], v)
+                        ) ts, cName)
         doC c = do
           (stmts'', cName) <- mkStmts c
           ran <- sequence stmts''
@@ -125,4 +176,7 @@ mkJSON name = do
           let stmts = take (length stmts' - 1) stmts'
           let vs = mconcat $ (\(_, v) -> [TH.VarE v]) <$> ran
           thisCons <- TH.runQ $ TH.conE cName
-          return $ TH.DoE (stmts <> [TH.NoBindS $ TH.InfixE (Just (TH.VarE 'return)) (TH.VarE '($)) (Just $ foldl TH.AppE thisCons vs )])
+          return $ TH.DoE
+            (stmts <>
+              [TH.NoBindS $
+                TH.InfixE (Just (TH.VarE 'return)) (TH.VarE '($)) (Just $ foldl TH.AppE thisCons vs )])

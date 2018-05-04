@@ -3,7 +3,7 @@ A library that generates direct JSON Parsers (without any intermediate represent
 
 
 # TODO
-- [ ] support for `String` (for now only `Text` is supported)
+- [ ] write up some bloody tests
 - [ ] support for heterogeneous arrays in JSON
-- [ ] make primitive parsers standard-abiding
+- [ ] use `scientific`?
 - [ ] maybe benchmarks?
