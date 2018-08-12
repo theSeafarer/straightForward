@@ -1,5 +1,5 @@
 # straightForward
-A library that generates direct JSON Parsers (without any intermediate representaion of the JSON value) for a given datatype using TemplateHaskell.
+A library that generates direct JSON Parsers (without any intermediate represention of the JSON value) for a given datatype using TemplateHaskell.
 
 
 # TODO
