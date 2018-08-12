@@ -1,3 +1,9 @@
+{- 
+  This Source Code Form is subject to the terms of the Mozilla Public
+  License, v. 2.0. If a copy of the MPL was not distributed with this
+  file, You can obtain one at http://mozilla.org/MPL/2.0/.
+-}
+
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE TemplateHaskell #-}
@@ -11,22 +17,17 @@ module Data.JSON.TH (
 
 
 import           Control.Applicative            ( (<|>) )
-import           Control.Monad                  ( void, forM )
+import           Control.Monad                  ( void )
 import           Data.Functor                   ( ($>) )
 import           Data.Semigroup                 ( mconcat, (<>) )
 import           Data.Char                      ( isDigit )
 import           Data.Word                      ( Word8 )
 import           Data.ByteString.Internal       ( c2w, w2c )
 import qualified Data.Attoparsec.ByteString     as P
-import qualified Data.Attoparsec.Combinator     as P
 import qualified Data.ByteString                as BS
 import qualified Data.ByteString.Char8          as BSC
 import qualified Language.Haskell.TH            as TH
-import qualified Language.Haskell.TH.Quote      as TH
-import qualified Language.Haskell.TH.Syntax     as TH
 
--- type P.Parser = P.Parsec T.Text ()
--- newtype Name = Name BS.ByteString deriving (Eq, Ord, Show)
 
 whitespace :: P.Parser ()
 whitespace = void $ P.many' $ oneOf " \n\t"
@@ -114,10 +115,9 @@ instance JSONParse a => JSONParse (Maybe a) where
     <|> Just <$> jsonParse P.<?> "Maybe"
 
 
-rightToMaybe :: Either e a -> Maybe a
-rightToMaybe = either (const Nothing) Just
 
 -- I have to use parseOnly otherwise I get a Partial, have to find out why
+parseJSON :: JSONParse a => BSC.ByteString -> Either String a
 parseJSON t = P.parseOnly jsonParse t
 
 mkJSON :: TH.Name -> TH.DecsQ
