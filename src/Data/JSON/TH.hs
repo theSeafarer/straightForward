@@ -21,7 +21,7 @@ import           Control.Monad                  ( void )
 import           Data.Functor                   ( ($>) )
 import           Data.Semigroup                 ( mconcat, (<>) )
 import           Data.Char                      ( isDigit )
-import           Data.Word                      ( Word8 )
+import           Data.Word8                     ( Word8, isHexDigit )
 import           Data.ByteString.Internal       ( c2w, w2c )
 import qualified Data.Attoparsec.ByteString     as P
 import qualified Data.ByteString                as BS
@@ -37,6 +37,10 @@ lexeme p = p <* whitespace
 
 digit :: P.Parser Word8
 digit = P.satisfy $ isDigit . w2c
+
+char :: Char -> P.Parser Word8
+char = P.word8 . c2w
+{-# INLINE char #-}
 
 oneOf :: String -> P.Parser Word8
 oneOf cs = P.satisfy $ \w -> w `elem` ws
@@ -55,17 +59,17 @@ floatP :: P.Parser Float
 floatP = lexeme $ fmap wordListRead $ P.try $ (++) <$> P.try int <*> decimal
   where
     intPart    = P.many1 digit
-    int        = (P.word8 (c2w '+') >> intPart)
-              <|> (:) <$> P.word8 (c2w '-') <*> intPart
+    int        = char '+' *> intPart
+              <|> (:) <$> char '-' <*> intPart
               <|> intPart
-    decimal    = (:) <$> P.word8 (c2w '.') <*> intPart
+    decimal    =  (:) <$> char '.' <*> intPart
 
 intP :: P.Parser Int
 intP = lexeme $ wordListRead <$> int
   where
     intPart    = P.many1 digit
-    int        = (P.word8 (c2w '+') >> intPart)
-              <|> (:) <$> P.word8 (c2w '-') <*> intPart
+    int        = char '+' *> intPart
+              <|> (:) <$> char '-' <*> intPart
               <|> intPart
 
 
@@ -73,12 +77,26 @@ strP' :: P.Parser BS.ByteString
 strP' = lexeme $
   P.word8 (c2w '\"') *> (BS.pack <$> P.manyTill' P.anyWord8 (P.word8 (c2w '\"')))-- P.takeWhile (\w -> w /= (c2w '\"'))
 
+strP :: P.Parser BS.ByteString
+strP = BS.pack <$> between (lexeme $ char '"') (lexeme $ char '"') (P.many' charP)
+    where charP =  (char '\\' *> escP)
+               <|> (P.satisfy $ \c -> c /= (c2w '"') && c /= (c2w '\\'))
+          escP  =  (c2w '"'  <$ char '"')
+               <|> (c2w '\\' <$ char '\\')
+               <|> (c2w '/'  <$ char '/' )
+               <|> (c2w '\b' <$ char 'b' )
+               <|> (c2w '\f' <$ char 'f' )
+               <|> (c2w '\n' <$ char 'n' )
+               <|> (c2w '\r' <$ char 'r' )
+               <|> (c2w '\t' <$ char 't' )
+             P.<?> "escape character"
+
 betQuote :: BS.ByteString -> P.Parser ()
-betQuote s = void $ between (P.word8 (c2w '\"')) (P.word8 (c2w '\"')) $ P.string s
+betQuote s = void $ between (char '\"') (char '\"') $ P.string s
 
 anyBetQuote :: P.Parser ()
 -- anyBetQuote = void $ between (P.word8 (c2w '\"')) (P.word8 (c2w '\"')) $ P.many1' P.anyWord8
-anyBetQuote = void $ P.word8 (c2w '"') *> P.anyWord8 *> P.manyTill' P.anyWord8 (P.word8 (c2w '\"'))
+anyBetQuote = void $ char '"' *> P.anyWord8 *> P.manyTill' P.anyWord8 (char '\"')
 
 boolP :: P.Parser Bool
 boolP = let true = P.string "true" $> True
@@ -94,22 +112,26 @@ nameP = lexeme $ do
 
 arrP :: JSONParse a => P.Parser [a]
 arrP = lexeme $
-  between (lexeme $ P.word8 (c2w '[')) (P.word8 (c2w ']')) (P.sepBy1 jsonParse $ lexeme $ P.word8 (c2w ','))
+  between (lexeme $ char '[') (char ']') (P.sepBy1 jsonParse $ lexeme $ char ',')
 
 class JSONParse a where
   jsonParse :: P.Parser a
 
 instance JSONParse BS.ByteString where
-  jsonParse = strP' P.<?> "ByteString"
+  jsonParse = strP P.<?> "ByteString"
 
 instance JSONParse Int where
   jsonParse = intP P.<?> "Integer"
+
 instance JSONParse Float where
   jsonParse = floatP P.<?> "Float"
+
 instance JSONParse Bool where
   jsonParse = boolP P.<?> "Bool"
+
 instance JSONParse a => JSONParse ([] a) where
   jsonParse = arrP P.<?> "Array"
+
 instance JSONParse a => JSONParse (Maybe a) where
   jsonParse = P.string "null" $> Nothing
     <|> Just <$> jsonParse P.<?> "Maybe"

@@ -17,6 +17,7 @@ dependencies:
 - base >= 4.7 && < 5
 - attoparsec >= 0.13
 - bytestring >= 0.10
+- word8
 - template-haskell >= 2.12
 
 library:
@@ -25,7 +26,7 @@ library:
 
 tests:
   straightForward-test:
-    main:                Spec.hs
+    main:                Test.hs
     source-dirs:         test
     ghc-options:
     - -threaded
