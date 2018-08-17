@@ -18,6 +18,7 @@ dependencies:
 - attoparsec >= 0.13
 - bytestring >= 0.10
 - word8
+- scientific
 - template-haskell >= 2.12
 
 library:
@@ -35,5 +36,8 @@ tests:
     dependencies:
     - straightForward
     - bytestring
+    - smallcheck
     - tasty
+    - aeson
     - tasty-hunit
+    - tasty-smallcheck

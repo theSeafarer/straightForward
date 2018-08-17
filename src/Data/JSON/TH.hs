@@ -7,7 +7,6 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE TemplateHaskell #-}
--- {-# LANGUAGE UndecidableInstances #-}
 
 module Data.JSON.TH (
   JSONParse,
@@ -16,17 +15,19 @@ module Data.JSON.TH (
 ) where
 
 
-import           Control.Applicative            ( (<|>) )
-import           Control.Monad                  ( void )
-import           Data.Functor                   ( ($>) )
-import           Data.Semigroup                 ( mconcat, (<>) )
-import           Data.Char                      ( isDigit )
-import           Data.Word8                     ( Word8, isHexDigit )
-import           Data.ByteString.Internal       ( c2w, w2c )
-import qualified Data.Attoparsec.ByteString     as P
-import qualified Data.ByteString                as BS
-import qualified Data.ByteString.Char8          as BSC
-import qualified Language.Haskell.TH            as TH
+import           Control.Applicative                ( (<|>) )
+import           Control.Monad                      ( void )
+import           Data.Functor                       ( ($>) )
+import           Data.Semigroup                     ( mconcat, (<>) )
+import           Data.Word8                         ( Word8, isHexDigit, isDigit )
+import           Data.ByteString.Internal           ( c2w, w2c )
+import           Data.Scientific                    ( Scientific, scientific )
+import qualified Data.Attoparsec.ByteString         as P
+import qualified Data.Attoparsec.ByteString.Char8   as PC
+import qualified Data.ByteString                    as BS
+import qualified Data.ByteString.Unsafe             as BS
+import qualified Data.ByteString.Char8              as BSC
+import qualified Language.Haskell.TH                as TH
 
 
 whitespace :: P.Parser ()
@@ -36,7 +37,7 @@ lexeme :: P.Parser a -> P.Parser a
 lexeme p = p <* whitespace
 
 digit :: P.Parser Word8
-digit = P.satisfy $ isDigit . w2c
+digit = P.satisfy $ isDigit
 
 char :: Char -> P.Parser Word8
 char = P.word8 . c2w
@@ -72,11 +73,6 @@ intP = lexeme $ wordListRead <$> int
               <|> (:) <$> char '-' <*> intPart
               <|> intPart
 
-
-strP' :: P.Parser BS.ByteString
-strP' = lexeme $
-  P.word8 (c2w '\"') *> (BS.pack <$> P.manyTill' P.anyWord8 (P.word8 (c2w '\"')))-- P.takeWhile (\w -> w /= (c2w '\"'))
-
 strP :: P.Parser BS.ByteString
 strP = BS.pack <$> between (lexeme $ char '"') (lexeme $ char '"') (P.many' charP)
     where charP =  (char '\\' *> escP)
@@ -101,7 +97,7 @@ anyBetQuote = void $ char '"' *> P.anyWord8 *> P.manyTill' P.anyWord8 (char '\"'
 boolP :: P.Parser Bool
 boolP = let true = P.string "true" $> True
             false = P.string "false" $> False
-          in lexeme $ true <|> false
+          in true <|> false
 
 nameP :: P.Parser ()
 nameP = lexeme $ do
@@ -111,14 +107,21 @@ nameP = lexeme $ do
   return ()
 
 arrP :: JSONParse a => P.Parser [a]
-arrP = lexeme $
-  between (lexeme $ char '[') (char ']') (P.sepBy1 jsonParse $ lexeme $ char ',')
+arrP = between
+  (lexeme $ char '[') 
+  (char ']') 
+  (P.sepBy1 jsonParse $ lexeme $ char ',')
+
+maybeP :: JSONParse a => P.Parser (Maybe a)
+maybeP = nullP <|> valP
+  where nullP = P.string "null" $> Nothing
+        valP  = Just <$> jsonParse
 
 class JSONParse a where
   jsonParse :: P.Parser a
 
 instance JSONParse BS.ByteString where
-  jsonParse = strP P.<?> "ByteString"
+  jsonParse = lexeme strP P.<?> "ByteString"
 
 instance JSONParse Int where
   jsonParse = intP P.<?> "Integer"
@@ -127,14 +130,13 @@ instance JSONParse Float where
   jsonParse = floatP P.<?> "Float"
 
 instance JSONParse Bool where
-  jsonParse = boolP P.<?> "Bool"
+  jsonParse = lexeme boolP P.<?> "Bool"
 
 instance JSONParse a => JSONParse ([] a) where
-  jsonParse = arrP P.<?> "Array"
+  jsonParse = lexeme arrP P.<?> "Array"
 
 instance JSONParse a => JSONParse (Maybe a) where
-  jsonParse = P.string "null" $> Nothing
-    <|> Just <$> jsonParse P.<?> "Maybe"
+  jsonParse = lexeme maybeP P.<?> "Maybe"
 
 
 
